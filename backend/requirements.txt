@@ -1,0 +1,5 @@
+fastapi==0.111.0
+uvicorn==0.30.1
+pymavlink==2.4.41
+websockets==12.0
+pydantic==2.7.4

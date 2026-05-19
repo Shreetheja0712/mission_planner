@@ -12,6 +12,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
 # Windows Zone Identifiers
 *:Zone.Identifier
 
