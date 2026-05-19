@@ -27,7 +27,7 @@ def get_distance_m(lat1, lon1, lat2, lon2):
     dlon = lon2 - lon1
     return math.sqrt(dlat**2 + dlon**2) * 1.113195e5
 
-async def wait_for_condition(condition_fn, timeout=30, interval=0.5):
+async def wait_for_condition(condition_fn, timeout=30, interval=0.3):
     global stop_mission
     elapsed = 0
     while elapsed < timeout:
@@ -52,7 +52,7 @@ async def execute_grid_mission(polygon, altitude, spacing, angle_deg):
         arm_vehicle()
         armed = await wait_for_condition(lambda: telemetry['armed'], timeout=15)
         if not armed:
-            await emit_status('Failed to arm!', error=True)
+            await emit_status('Failed to arm! In SITL console type: arm throttle', error=True)
             return
 
         await emit_status('Armed! Taking off...')

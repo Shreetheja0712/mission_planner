@@ -4,6 +4,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import json
 
+from drone import mavlink_bridge
 from drone.mavlink_bridge import connect_vehicle, telemetry_loop, arm_vehicle, takeoff_cmd, set_mode
 from drone.telemetry_queue import connected_clients
 from algorithms.mission import execute_grid_mission, abort_mission, emit_ws
@@ -35,6 +36,11 @@ app.add_middleware(
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     connected_clients.add(websocket)
+    print('[SAR] Browser connected')
+    await websocket.send_text(json.dumps({
+        "type": "connection_status",
+        "data": {"connected": mavlink_bridge.vehicle is not None}
+    }))
     try:
         while True:
             # We can receive JSON commands here instead of SocketIO events!
@@ -51,8 +57,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     arm_vehicle()
                     await asyncio.sleep(3)
                     takeoff_cmd(alt)
+                    await emit_ws('mission_status', {'status': f'Manual takeoff \u2192 {alt}m'})
                 elif command == "manual_rtl":
                     set_mode("RTL")
+                    await emit_ws('mission_status', {'status': 'RTL activated'})
                 elif command == "start_mission":
                     polygon = payload.get('polygon', [])
                     altitude = float(payload.get('altitude', 20))
@@ -64,6 +72,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     else:
                         # Launch mission loop as a background task
                         asyncio.create_task(execute_grid_mission(polygon, altitude, spacing, angle_deg))
+                        await emit_ws('mission_status', {'status': f'Mission queued \u2014 alt:{altitude}m spacing:{spacing}m angle:{angle_deg}\u00b0'})
                 elif command == "preview_grid":
                     polygon = payload.get('polygon', [])
                     altitude = float(payload.get('altitude', 20))
@@ -84,7 +93,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"Error handling WebSocket message: {e}")
 
     except WebSocketDisconnect:
-        connected_clients.remove(websocket)
+        connected_clients.discard(websocket)
 
 @app.get("/")
 def read_root():

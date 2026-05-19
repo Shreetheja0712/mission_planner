@@ -1,0 +1,153 @@
+<div class="scanline"></div>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <circle cx="12" cy="12" r="2"/>
+      <path d="M5 5l3 3M19 5l-3 3M5 19l3-3M19 19l-3-3"/>
+      <circle cx="5" cy="5" r="1.5" fill="currentColor"/>
+      <circle cx="19" cy="5" r="1.5" fill="currentColor"/>
+      <circle cx="5" cy="19" r="1.5" fill="currentColor"/>
+      <circle cx="19" cy="19" r="1.5" fill="currentColor"/>
+    </svg>
+    SAR · Autonomous Mission Control
+  </div>
+
+  <div class="header-divider"></div>
+
+  <div class="conn-badge">
+    <div class="conn-dot" id="connDot"></div>
+    <span id="connText">DISCONNECTED</span>
+  </div>
+
+  <div class="header-divider"></div>
+
+  <div class="mode-badge" id="modeBadge">--</div>
+  <div class="armed-badge" id="armedBadge">DISARMED</div>
+
+  <div class="time-display" id="clockDisplay">--:--:--</div>
+</header>
+
+<!-- Map -->
+<div id="map" style="position:relative;">
+  <div class="map-hint" id="mapHint">Click to add ROI points — double-click to close polygon</div>
+</div>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+
+  <!-- Telemetry -->
+  <div class="section">
+    <div class="section-title">Telemetry</div>
+    <div class="telem-grid">
+
+      <div class="telem-card">
+        <div class="telem-label">Altitude</div>
+        <div class="telem-value" id="tAlt">0.0<span class="telem-unit">m</span></div>
+      </div>
+
+      <div class="telem-card">
+        <div class="telem-label">Heading</div>
+        <div class="telem-value" id="tHdg">0<span class="telem-unit">°</span></div>
+      </div>
+
+      <div class="telem-card">
+        <div class="telem-label">Ground Speed</div>
+        <div class="telem-value" id="tSpd">0.0<span class="telem-unit">m/s</span></div>
+      </div>
+
+      <div class="telem-card">
+        <div class="telem-label">Voltage</div>
+        <div class="telem-value" id="tVolt">--<span class="telem-unit">V</span></div>
+      </div>
+
+      <div class="telem-card wide">
+        <div class="telem-label">Battery <span id="tBattPct" style="color:var(--green);margin-left:6px;">--%</span></div>
+        <div class="battery-bar-wrap">
+          <div class="battery-bar" id="battBar" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="telem-card wide">
+        <div class="telem-label">GPS</div>
+        <div class="gps-row">
+          <div class="gps-dot" id="gpsDot"></div>
+          <div class="gps-text" id="gpsText">No Fix</div>
+        </div>
+        <div class="coord-display" id="coordDisplay">--.-----°, --.-----°</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Mission Config -->
+  <div class="section">
+    <div class="section-title">Mission Config</div>
+
+    <div class="mission-params">
+      <div class="param-row">
+        <span class="param-label">Altitude</span>
+        <input class="param-input" type="number" id="missionAlt" value="20" min="5" max="120">
+        <span class="param-unit">m</span>
+      </div>
+      <div class="param-row">
+        <span class="param-label">Grid Spacing</span>
+        <input class="param-input" type="number" id="gridSpacing" value="20" min="5" max="100">
+        <span class="param-unit">m</span>
+      </div>
+      <div class="param-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+        <div style="display:flex;width:100%;justify-content:space-between;align-items:center;">
+          <span class="param-label" style="width:auto;">Grid Angle</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="telem-value" id="angleDisplay" style="font-size:15px;">0</span>
+            <span class="telem-unit">°</span>
+          </div>
+        </div>
+        <div style="width:100%;display:flex;align-items:center;gap:8px;">
+          <span class="param-label" style="width:auto;font-size:9px;">0°</span>
+          <input type="range" id="gridAngle" min="0" max="179" value="0" step="1"
+            style="flex:1;accent-color:var(--accent);cursor:pointer;height:4px;">
+          <span class="param-label" style="width:auto;font-size:9px;">179°</span>
+        </div>
+        <div style="width:100%;display:flex;gap:4px;">
+          <button class="btn btn-ghost" style="flex:1;padding:4px;font-size:10px;margin:0;" data-angle-preset="0">0° Horiz</button>
+          <button class="btn btn-ghost" style="flex:1;padding:4px;font-size:10px;margin:0;" data-angle-preset="45">45° Diag</button>
+          <button class="btn btn-ghost" style="flex:1;padding:4px;font-size:10px;margin:0;" data-angle-preset="90">90° Vert</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="roi-info" id="roiInfo">No ROI defined — draw on map</div>
+
+    <div class="progress-wrap">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <button class="btn btn-ghost" id="btnDrawROI">✏ Draw ROI Polygon</button>
+    <button class="btn btn-ghost" id="btnPreviewGrid" disabled>⊞ Preview Grid</button>
+    <button class="btn btn-ghost" id="btnClearROI">✕ Clear ROI</button>
+    <button class="btn btn-primary" id="btnStartMission" disabled>▶ Start Grid Search</button>
+    <button class="btn btn-danger" id="btnAbort">⬛ Abort / RTL</button>
+  </div>
+
+  <!-- Manual Controls -->
+  <div class="section">
+    <div class="section-title">Manual Control</div>
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <input class="param-input" type="number" id="manualAlt" value="15" min="1" max="100" style="width:60px;flex:1">
+      <span class="param-unit" style="line-height:34px;">m</span>
+    </div>
+    <button class="btn btn-warning" id="btnManualTakeoff">↑ Takeoff</button>
+    <button class="btn btn-ghost" id="btnManualRTL">⌂ Return to Launch</button>
+  </div>
+
+  <!-- Status Log -->
+  <div class="section" style="flex:1;">
+    <div class="section-title">Mission Log</div>
+    <div class="status-log" id="statusLog">
+      <div class="log-line">System initializing...</div>
+    </div>
+  </div>
+
+</aside>

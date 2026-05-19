@@ -15,19 +15,19 @@ MODE_MAP = {
 
 async def connect_vehicle():
     global vehicle
-    print(f"Connecting to MAVLink on {settings.MAVLINK_URL}...")
+    print(f"[SAR] Connecting to SITL on {settings.MAVLINK_URL} ...")
     try:
         # Run the blocking connection in a thread
         vehicle = await asyncio.to_thread(mavutil.mavlink_connection, settings.MAVLINK_URL)
         await asyncio.to_thread(vehicle.wait_heartbeat, timeout=30)
-        print(f"Heartbeat — system {vehicle.target_system}, component {vehicle.target_component}")
+        print(f"[SAR] Heartbeat — system {vehicle.target_system}, component {vehicle.target_component}")
         vehicle.mav.request_data_stream_send(
             vehicle.target_system, vehicle.target_component,
             mavutil.mavlink.MAV_DATA_STREAM_ALL, 10, 1
         )
         return True
     except Exception as e:
-        print(f"Connection failed: {e}")
+        print(f"[SAR] Connection failed: {e}")
         return False
 
 async def emit_telemetry_to_clients():
@@ -49,8 +49,7 @@ async def telemetry_loop():
     while True:
         if vehicle:
             try:
-                # Read all available messages up to a limit so we don't block forever
-                for _ in range(50): 
+                while True:
                     msg = vehicle.recv_match(blocking=False)
                     if msg is None:
                         break
@@ -75,16 +74,13 @@ async def telemetry_loop():
                         telemetry['armed'] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
 
                 now = time.time()
-                # Broadcast at ~4 Hz (every 0.25s) just like your old app, 
-                # or reduce to 0.1 for 10Hz.
                 if now - last_emit >= 0.25:
                     await emit_telemetry_to_clients()
                     last_emit = now
             except Exception as e:
-                print(f"Telemetry error: {e}")
+                print(f"[SAR] Telemetry error: {e}")
         
-        # Yield back to the event loop so FastAPI can process requests
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
 
 def set_mode(mode_name):
     if not vehicle: return
