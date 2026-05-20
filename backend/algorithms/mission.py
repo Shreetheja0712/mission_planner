@@ -33,6 +33,14 @@ async def wait_for_condition(condition_fn, timeout=30, interval=0.3):
     while elapsed < timeout:
         if stop_mission:
             return False
+            
+        battery = telemetry.get('battery_level', -1)
+        if 0 <= battery <= 20:
+            if not stop_mission:
+                await emit_status(f'BATTERY CRITICAL ({battery}%). Aborting mission!', error=True, aborted=True)
+                abort_mission()
+            return False
+            
         if condition_fn():
             return True
         await asyncio.sleep(interval)
@@ -99,7 +107,8 @@ async def execute_grid_mission(polygon, altitude, spacing, angle_deg):
             )
 
         if stop_mission:
-            await emit_status('Mission aborted by operator', aborted=True)
+            if telemetry.get('battery_level', -1) > 20:
+                await emit_status('Mission aborted by operator', aborted=True)
         else:
             await emit_status('Grid complete! Returning to launch...', progress=100)
 

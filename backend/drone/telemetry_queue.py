@@ -4,7 +4,7 @@ import asyncio
 telemetry = {
     'lat': 0, 'lon': 0, 'alt': 0,
     'heading': 0, 'groundspeed': 0, 'airspeed': 0,
-    'battery_voltage': 0, 'battery_level': 0,
+    'battery_voltage': 0, 'battery_level': -1,
     'mode': '--', 'armed': False,
     'gps_fix': 0, 'satellites': 0,
 }
