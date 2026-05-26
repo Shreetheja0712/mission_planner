@@ -144,6 +144,48 @@ class MissionStateTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(mission.mission_state['status'], 'completed')
 
+    async def test_resume_retries_arm_command_after_reconnect(self):
+        with patch.object(
+            mission,
+            'wait_for_condition',
+            new=AsyncMock(side_effect=['timeout', 'reached']),
+        ):
+            result = await mission._arm_for_flight('mission-1', resuming=True)
+
+        self.assertEqual(result, 'reached')
+        self.assertEqual(self.arm.call_count, 2)
+        self.set_mode.assert_called_once_with('GUIDED')
+
+    async def test_resume_arm_timeout_keeps_checkpoint_paused(self):
+        mission.mission_state['rtl_waypoints'] = [
+            {'number': 1, 'label': 'RTL WP 1', 'lat': -35.05, 'lon': 149.05, 'alt': 8}
+        ]
+        with (
+            patch.object(mission, '_monitored_delay', new=AsyncMock(return_value=True)),
+            patch.object(mission, '_arm_for_flight', new=AsyncMock(return_value='timeout')),
+        ):
+            await mission._run_mission('mission-1', resuming=True)
+
+        self.assertEqual(mission.mission_state['status'], 'paused')
+        self.assertEqual(mission.mission_state['next_wp'], 1)
+        self.assertEqual(len(mission.mission_state['rtl_waypoints']), 1)
+        self.assertTrue(Path(mission.settings.MISSION_STATE_FILE).exists())
+
+    async def test_resume_takeoff_timeout_keeps_checkpoint_paused(self):
+        with (
+            patch.object(mission, '_monitored_delay', new=AsyncMock(return_value=True)),
+            patch.object(mission, '_arm_for_flight', new=AsyncMock(return_value='reached')),
+            patch.object(
+                mission, 'wait_for_condition', new=AsyncMock(return_value='timeout')
+            ),
+        ):
+            await mission._run_mission('mission-1', resuming=True)
+
+        self.assertEqual(mission.mission_state['status'], 'paused')
+        self.assertEqual(mission.mission_state['next_wp'], 1)
+        self.assertTrue(Path(mission.settings.MISSION_STATE_FILE).exists())
+        self.set_mode.assert_called_with('RTL')
+
     async def test_multiple_pauses_keep_numbered_rtl_history(self):
         await mission.pause_mission('First RTL')
         mission.mission_state['status'] = 'running'

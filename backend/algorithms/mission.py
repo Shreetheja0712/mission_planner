@@ -18,6 +18,9 @@ from algorithms.navigation import generate_grid_waypoints
 
 RTL_MODES = {'RTL', 'SMART_RTL'}
 RUNNING_STATES = {'running', 'paused'}
+ARM_RETRY_INTERVAL_SECONDS = 3
+INITIAL_ARM_TIMEOUT_SECONDS = 15
+RESUME_ARM_TIMEOUT_SECONDS = 60
 mission_state = {'status': 'idle'}
 rtl_detection_armed = False
 
@@ -242,6 +245,43 @@ async def _fail_mission(mission_id, msg):
     await emit_mission_state()
 
 
+async def _pause_resume_attempt(mission_id, reason):
+    if not _same_running_mission(mission_id):
+        return
+    mission_state['status'] = 'paused'
+    mission_state['pause_reason'] = reason
+    _persist_state()
+    await emit_status(
+        f'Resume paused: {reason}. Try Resume Mission again when the vehicle is ready.',
+        paused=True,
+        progress=mission_state.get('progress', 0),
+    )
+    await emit_mission_state()
+
+
+async def _arm_for_flight(mission_id, resuming):
+    timeout = RESUME_ARM_TIMEOUT_SECONDS if resuming else INITIAL_ARM_TIMEOUT_SECONDS
+    elapsed = 0
+    attempt = 0
+    while elapsed < timeout:
+        if not _same_running_mission(mission_id):
+            return mission_state.get('status', 'aborted')
+        if attempt > 0:
+            if resuming and attempt == 1:
+                await emit_status('Vehicle not armed yet after reconnect; retrying arm command...')
+            set_mode('GUIDED')
+        arm_vehicle()
+        wait_time = min(ARM_RETRY_INTERVAL_SECONDS, timeout - elapsed)
+        armed = await wait_for_condition(
+            mission_id, lambda: telemetry['armed'], timeout=wait_time
+        )
+        if armed != 'timeout':
+            return armed
+        elapsed += wait_time
+        attempt += 1
+    return 'timeout'
+
+
 async def _run_mission(mission_id, resuming=False):
     global rtl_detection_armed, mission_state
     rtl_detection_armed = False
@@ -259,11 +299,15 @@ async def _run_mission(mission_id, resuming=False):
         await emit_status('Arming motors...')
         if not _same_running_mission(mission_id):
             return
-        arm_vehicle()
-        armed = await wait_for_condition(mission_id, lambda: telemetry['armed'], timeout=15)
+        armed = await _arm_for_flight(mission_id, resuming)
         if armed != 'reached':
             if armed == 'timeout':
-                await _fail_mission(mission_id, 'Failed to arm! In SITL console type: arm throttle')
+                if resuming:
+                    await _pause_resume_attempt(
+                        mission_id, 'Vehicle did not arm after reconnect'
+                    )
+                else:
+                    await _fail_mission(mission_id, 'Failed to arm! In SITL console type: arm throttle')
             return
 
         altitude = mission_state['altitude']
@@ -283,7 +327,13 @@ async def _run_mission(mission_id, resuming=False):
         )
         if reached != 'reached':
             if reached == 'timeout':
-                await _fail_mission(mission_id, f'Takeoff timeout at {telemetry["alt"]}m')
+                if resuming:
+                    set_mode('RTL')
+                    await _pause_resume_attempt(
+                        mission_id, f'Takeoff not confirmed at {telemetry["alt"]}m'
+                    )
+                else:
+                    await _fail_mission(mission_id, f'Takeoff timeout at {telemetry["alt"]}m')
             return
 
         if resuming and mission_state.get('rtl_waypoints'):
