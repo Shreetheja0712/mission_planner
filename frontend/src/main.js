@@ -33,6 +33,7 @@ const btnPreviewGrid = document.getElementById('btnPreviewGrid');
 const btnClearROI = document.getElementById('btnClearROI');
 const btnStartMission = document.getElementById('btnStartMission');
 const btnResumeMission = document.getElementById('btnResumeMission');
+const btnMissionRTL = document.getElementById('btnMissionRTL');
 
 // ── Map Init ──────────────────────────────────────────────────────────────────
 const map = L.map('map', {
@@ -136,12 +137,14 @@ socket.on('connect', () => log('Connected to backend', 'info'));
 socket.on('disconnect', () => {
   isConnected = false;
   updateConnStatus(false);
+  updateMissionControls();
   log('Disconnected from backend', 'error');
 });
 
 socket.on('connection_status', (data) => {
   isConnected = data.connected;
   updateConnStatus(data.connected);
+  updateMissionControls();
   if (data.connected) log('Drone link established', 'success');
   else log(data.message || 'Drone not connected', 'warn');
 });
@@ -491,9 +494,9 @@ function makeWaypointIcon(number, isStart) {
 function makeRtlWaypointIcon(number) {
   return L.divIcon({
     className: 'rtl-waypoint-marker',
-    html: `<span class="rtl-waypoint-marker-label">RTL WP ${number}</span>`,
-    iconSize: [70, 22],
-    iconAnchor: [35, 11]
+    html: `<span class="rtl-waypoint-marker-label">R${number}</span>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11]
   });
 }
 
@@ -553,7 +556,7 @@ function missionIsLocked() {
 function updateMissionControls() {
   const locked = missionIsLocked();
   const paused = missionSnapshot.status === 'paused';
-  const canResume = paused && latestBatteryLevel > 20;
+  const canResume = paused && latestBatteryLevel > 20 && isConnected;
 
   btnDrawROI.disabled = isDrawing || locked;
   btnClearROI.disabled = locked;
@@ -658,6 +661,13 @@ function resumeMission() {
 function abortMission() {
   socket.emit('abort_mission');
   log('ABORT command sent - mission will be discarded', 'error');
+}
+
+function missionRTL() {
+  socket.emit('manual_rtl');
+  log(missionSnapshot.status === 'running'
+    ? 'RTL requested - mission will pause for resume'
+    : 'RTL command sent', 'warn');
 }
 
 function manualTakeoff() {
@@ -796,6 +806,7 @@ document.getElementById('btnPreviewGrid').addEventListener('click', previewGrid)
 document.getElementById('btnClearROI').addEventListener('click', clearROI);
 document.getElementById('btnStartMission').addEventListener('click', startMission);
 btnResumeMission.addEventListener('click', resumeMission);
+btnMissionRTL.addEventListener('click', missionRTL);
 document.getElementById('btnAbort').addEventListener('click', abortMission);
 document.getElementById('btnManualTakeoff').addEventListener('click', manualTakeoff);
 document.getElementById('btnManualRTL').addEventListener('click', manualRTL);

@@ -4,8 +4,14 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import json
 
-from drone import mavlink_bridge
-from drone.mavlink_bridge import connect_vehicle, telemetry_loop, arm_vehicle, takeoff_cmd, set_mode
+from drone.mavlink_bridge import (
+    arm_vehicle,
+    connect_vehicle,
+    is_vehicle_connected,
+    set_mode,
+    takeoff_cmd,
+    telemetry_loop,
+)
 from drone.telemetry_queue import connected_clients
 from algorithms.mission import (
     abort_mission,
@@ -24,10 +30,11 @@ async def lifespan(app: FastAPI):
     # Startup: Connect to drone and start background telemetry task
     load_mission_state()
     connected = await connect_vehicle()
+    asyncio.create_task(telemetry_loop())
     if connected:
-        asyncio.create_task(telemetry_loop())
+        print("[SAR] Vehicle link online")
     else:
-        print("[WARNING] Could not connect to SITL/Drone. Is it running?")
+        print("[WARNING] Waiting for SITL/Drone heartbeat on the configured UDP endpoint.")
     yield
     # Shutdown logic can go here
 
@@ -49,7 +56,7 @@ async def websocket_endpoint(websocket: WebSocket):
     print('[SAR] Browser connected')
     await websocket.send_text(json.dumps({
         "type": "connection_status",
-        "data": {"connected": mavlink_bridge.vehicle is not None}
+        "data": {"connected": is_vehicle_connected()}
     }))
     await send_mission_state(websocket)
     try:

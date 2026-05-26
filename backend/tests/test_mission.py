@@ -32,6 +32,9 @@ class MissionStateTests(unittest.IsolatedAsyncioTestCase):
         self.goto = patch.object(mission, 'goto').start()
         self.takeoff = patch.object(mission, 'takeoff_cmd').start()
         self.arm = patch.object(mission, 'arm_vehicle').start()
+        self.is_connected = patch.object(
+            mission, 'is_vehicle_connected', return_value=True
+        ).start()
         self.emit_ws = patch.object(mission, 'emit_ws', new=AsyncMock()).start()
 
     def tearDown(self):
@@ -106,6 +109,16 @@ class MissionStateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(mission.mission_state['status'], 'running')
         self.assertEqual(len(tasks), 1)
+
+    async def test_resume_waits_for_reconnected_vehicle_link(self):
+        mission.mission_state['status'] = 'paused'
+        mission.telemetry['battery_level'] = 90
+        self.is_connected.return_value = False
+
+        self.assertFalse(await mission.resume_grid_mission())
+
+        self.assertEqual(mission.mission_state['status'], 'paused')
+        self.goto.assert_not_called()
 
     async def test_resume_rejoins_latest_rtl_point_before_pending_grid_point(self):
         mission.mission_state['rtl_waypoints'] = [

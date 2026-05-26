@@ -5,7 +5,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from core.config import settings
-from drone.mavlink_bridge import arm_vehicle, goto, set_mode, takeoff_cmd
+from drone.mavlink_bridge import (
+    arm_vehicle,
+    goto,
+    is_vehicle_connected,
+    set_mode,
+    takeoff_cmd,
+)
 from drone.telemetry_queue import connected_clients, telemetry
 from algorithms.navigation import generate_grid_waypoints
 
@@ -94,7 +100,9 @@ def get_mission_snapshot():
     snapshot['rtl_waypoints'] = [dict(wp) for wp in mission_state.get('rtl_waypoints', [])]
     snapshot['locked'] = mission_state.get('status') in RUNNING_STATES
     snapshot['resume_allowed'] = (
-        mission_state.get('status') == 'paused' and battery > 20
+        mission_state.get('status') == 'paused'
+        and battery > 20
+        and is_vehicle_connected()
     )
     return snapshot
 
@@ -401,6 +409,10 @@ async def resume_grid_mission():
     battery = telemetry.get('battery_level', -1)
     if battery <= 20:
         await emit_status('Recharge required: battery must be above 20% to resume.', error=True)
+        await emit_mission_state()
+        return False
+    if not is_vehicle_connected():
+        await emit_status('Reconnect the vehicle link before resuming this mission.', error=True)
         await emit_mission_state()
         return False
 
