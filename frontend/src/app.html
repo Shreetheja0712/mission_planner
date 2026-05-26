@@ -31,7 +31,7 @@
 
 <!-- Map -->
 <div id="map" style="position:relative;">
-  <div class="map-hint" id="mapHint">Click to add ROI points — double-click to close polygon</div>
+  <div class="map-hint" id="mapHint">Click to add points | click first point or Finish Polygon to close | Backspace to undo</div>
 </div>
 
 <!-- Sidebar -->
@@ -125,6 +125,10 @@
     </div>
 
     <button class="btn btn-ghost" id="btnDrawROI">✏ Draw ROI Polygon</button>
+    <div class="draw-actions" id="drawActions" hidden>
+      <button class="btn btn-ghost" id="btnUndoPoint" disabled>Undo Point</button>
+      <button class="btn btn-primary" id="btnFinishROI" disabled>Finish Polygon</button>
+    </div>
     <button class="btn btn-ghost" id="btnPreviewGrid" disabled>⊞ Preview Grid</button>
     <button class="btn btn-ghost" id="btnClearROI">✕ Clear ROI</button>
     <button class="btn btn-primary" id="btnStartMission" disabled>▶ Start Grid Search</button>

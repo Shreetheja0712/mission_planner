@@ -390,6 +390,29 @@ body {
     color: var(--accent);
   }
 
+  .btn-ghost:disabled,
+  .btn-ghost:disabled:hover {
+    border-color: var(--border);
+    color: var(--text-dim);
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .draw-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .draw-actions[hidden] {
+    display: none;
+  }
+
+  .draw-actions .btn {
+    flex: 1;
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
+
   /* ROI info */
   .roi-info {
     font-family: var(--mono);

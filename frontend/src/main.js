@@ -20,6 +20,11 @@ let drawMarkers = [];
 let drawPolyline = null;
 let waypointMarkers = [];
 let currentWpLine = null;
+const mapHint = document.getElementById('mapHint');
+const btnDrawROI = document.getElementById('btnDrawROI');
+const drawActions = document.getElementById('drawActions');
+const btnUndoPoint = document.getElementById('btnUndoPoint');
+const btnFinishROI = document.getElementById('btnFinishROI');
 
 // ── Map Init ──────────────────────────────────────────────────────────────────
 const map = L.map('map', {
@@ -225,56 +230,164 @@ setInterval(() => {
 
 // ── ROI Drawing ───────────────────────────────────────────────────────────────
 function startDrawing() {
-  clearROI();
+  clearROI(false);
   isDrawing = true;
   map.getContainer().style.cursor = 'crosshair';
-  document.getElementById('mapHint').classList.add('visible');
-  document.getElementById('roiInfo').textContent = 'Click on map to add points...';
+  mapHint.classList.add('visible');
+  map.doubleClickZoom.disable();
+  updateDrawingStatus();
+  setDrawingControls(true);
 
   map.on('click', onMapClick);
   map.on('dblclick', finishDrawing);
+  document.addEventListener('keydown', onDrawingKeyDown);
 }
 
 function onMapClick(e) {
   if (!isDrawing) return;
-  L.DomEvent.stopPropagation(e);
 
   roiPoints.push([e.latlng.lat, e.latlng.lng]);
 
-  // Add dot marker
+  // Keep the first vertex easy to select as the close target.
+  const isFirstPoint = roiPoints.length === 1;
   const m = L.circleMarker(e.latlng, {
-    radius: 5,
+    radius: isFirstPoint ? 6 : 5,
     color: '#00d4ff',
     fillColor: '#00d4ff',
     fillOpacity: 1,
-    weight: 2
+    weight: isFirstPoint ? 3 : 2,
+    bubblingMouseEvents: !isFirstPoint
   }).addTo(map);
+  if (isFirstPoint) {
+    m.on('click', onFirstVertexClick);
+  }
   drawMarkers.push(m);
 
-  // Update preview line
+  updateDraftShape();
+  updateDrawingStatus();
+}
+
+function updateDraftShape() {
   if (drawPolyline) map.removeLayer(drawPolyline);
-  if (roiPoints.length > 1) {
+  drawPolyline = null;
+
+  if (roiPoints.length >= 3) {
+    drawPolyline = L.polygon(roiPoints, {
+      color: '#00d4ff',
+      fillColor: '#00d4ff',
+      fillOpacity: 0.06,
+      weight: 1.5,
+      dashArray: '6,4',
+      opacity: 0.8,
+      interactive: false
+    }).addTo(map);
+  } else if (roiPoints.length > 1) {
     drawPolyline = L.polyline(roiPoints, {
       color: '#00d4ff',
       weight: 1.5,
       dashArray: '6,4',
-      opacity: 0.7
+      opacity: 0.7,
+      interactive: false
     }).addTo(map);
   }
 
-  document.getElementById('roiInfo').textContent =
-    `${roiPoints.length} point${roiPoints.length > 1 ? 's' : ''} — double-click to close`;
+  drawMarkers.forEach(m => m.bringToFront());
+}
+
+function updateDrawingStatus() {
+  const count = roiPoints.length;
+  const firstMarker = drawMarkers[0];
+  if (firstMarker) {
+    if (count >= 3) {
+      firstMarker.bindTooltip('Click to close polygon', { direction: 'top', offset: [0, -5] });
+    } else {
+      firstMarker.unbindTooltip();
+    }
+  }
+
+  if (count >= 3) {
+    document.getElementById('roiInfo').textContent =
+      `${count} points - click first point or Finish Polygon to close`;
+  } else if (count > 0) {
+    document.getElementById('roiInfo').textContent =
+      `${count} point${count === 1 ? '' : 's'} - add ${3 - count} more to form an ROI`;
+  } else {
+    document.getElementById('roiInfo').textContent = 'Click on map to add ROI points...';
+  }
+  setDrawingControls(isDrawing);
+}
+
+function setDrawingControls(active) {
+  btnDrawROI.disabled = active;
+  drawActions.hidden = !active;
+  btnUndoPoint.disabled = !active || roiPoints.length === 0;
+  btnFinishROI.disabled = !active || roiPoints.length < 3;
+}
+
+function onFirstVertexClick(e) {
+  if (!isDrawing || roiPoints.length < 3) return;
+  if (e.originalEvent) L.DomEvent.stop(e.originalEvent);
+  finishDrawing();
+}
+
+function undoDrawPoint() {
+  if (!isDrawing || roiPoints.length === 0) return;
+
+  roiPoints.pop();
+  const marker = drawMarkers.pop();
+  map.removeLayer(marker);
+  updateDraftShape();
+  updateDrawingStatus();
+}
+
+function removeDoubleClickDuplicate() {
+  if (roiPoints.length < 2) return;
+
+  const finalPoint = map.latLngToContainerPoint(roiPoints[roiPoints.length - 1]);
+  const priorPoint = map.latLngToContainerPoint(roiPoints[roiPoints.length - 2]);
+  if (finalPoint.distanceTo(priorPoint) <= 10) {
+    undoDrawPoint();
+  }
+}
+
+function onDrawingKeyDown(e) {
+  if (!isDrawing || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+
+  if (e.key === 'Enter' && roiPoints.length >= 3) {
+    e.preventDefault();
+    finishDrawing();
+  } else if ((e.key === 'Backspace' || e.key === 'Delete') && roiPoints.length > 0) {
+    e.preventDefault();
+    undoDrawPoint();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    cancelDrawing();
+  }
+}
+
+function stopDrawingInteractions() {
+  map.off('click', onMapClick);
+  map.off('dblclick', finishDrawing);
+  document.removeEventListener('keydown', onDrawingKeyDown);
+  map.doubleClickZoom.enable();
+  map.getContainer().style.cursor = '';
+  mapHint.classList.remove('visible');
+  setDrawingControls(false);
 }
 
 function finishDrawing(e) {
-  if (!isDrawing || roiPoints.length < 3) return;
-  L.DomEvent.stopPropagation(e);
+  if (!isDrawing) return;
+  if (e?.originalEvent) L.DomEvent.stop(e.originalEvent);
+
+  // Leaflet emits both click events before dblclick; retain one intended vertex.
+  if (e?.type === 'dblclick') removeDoubleClickDuplicate();
+  if (roiPoints.length < 3) {
+    updateDrawingStatus();
+    return;
+  }
 
   isDrawing = false;
-  map.off('click', onMapClick);
-  map.off('dblclick', finishDrawing);
-  map.getContainer().style.cursor = '';
-  document.getElementById('mapHint').classList.remove('visible');
+  stopDrawingInteractions();
 
   // Remove preview
   if (drawPolyline) { map.removeLayer(drawPolyline); drawPolyline = null; }
@@ -297,6 +410,7 @@ function finishDrawing(e) {
   document.getElementById('roiInfo').textContent =
     `ROI: ${roiPoints.length} pts · ~${area.toFixed(0)} m²`;
 
+  document.getElementById('btnPreviewGrid').disabled = false;
   document.getElementById('btnStartMission').disabled = false;
   log(`ROI defined: ${roiPoints.length} vertices, ~${area.toFixed(0)}m²`, 'success');
 
@@ -304,12 +418,14 @@ function finishDrawing(e) {
   requestGridPreview();
 }
 
-function clearROI() {
+function cancelDrawing() {
+  clearROI(false);
+  log('ROI drawing cancelled', 'warn');
+}
+
+function clearROI(shouldLog = true) {
   isDrawing = false;
-  map.off('click', onMapClick);
-  map.off('dblclick', finishDrawing);
-  map.getContainer().style.cursor = '';
-  document.getElementById('mapHint').classList.remove('visible');
+  stopDrawingInteractions();
 
   if (roiPolygon) { map.removeLayer(roiPolygon); roiPolygon = null; }
   if (drawPolyline) { map.removeLayer(drawPolyline); drawPolyline = null; }
@@ -321,7 +437,7 @@ function clearROI() {
   document.getElementById('btnStartMission').disabled = true;
   document.getElementById('btnPreviewGrid').disabled = true;
   document.getElementById('progressBar').style.width = '0%';
-  log('ROI cleared', 'warn');
+  if (shouldLog !== false) log('ROI cleared', 'warn');
 }
 
 function calculatePolygonArea(points) {
@@ -531,10 +647,9 @@ document.getElementById('gridSpacing').addEventListener('change', () => {
 
 // ── Grid Preview (angle slider) end ───────────────────────────────────────────
 
-// Prevent double-click zoom interfering with polygon drawing
-map.doubleClickZoom.disable();
-
-document.getElementById('btnDrawROI').addEventListener('click', startDrawing);
+btnDrawROI.addEventListener('click', startDrawing);
+btnUndoPoint.addEventListener('click', undoDrawPoint);
+btnFinishROI.addEventListener('click', () => finishDrawing());
 document.getElementById('btnPreviewGrid').addEventListener('click', previewGrid);
 document.getElementById('btnClearROI').addEventListener('click', clearROI);
 document.getElementById('btnStartMission').addEventListener('click', startMission);
