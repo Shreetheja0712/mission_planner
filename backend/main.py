@@ -7,12 +7,22 @@ import json
 from drone import mavlink_bridge
 from drone.mavlink_bridge import connect_vehicle, telemetry_loop, arm_vehicle, takeoff_cmd, set_mode
 from drone.telemetry_queue import connected_clients
-from algorithms.mission import execute_grid_mission, abort_mission, emit_ws
+from algorithms.mission import (
+    abort_mission,
+    emit_ws,
+    load_mission_state,
+    mission_is_running,
+    pause_mission,
+    resume_grid_mission,
+    send_mission_state,
+    start_grid_mission,
+)
 from algorithms.navigation import generate_grid_waypoints
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Connect to drone and start background telemetry task
+    load_mission_state()
     connected = await connect_vehicle()
     if connected:
         asyncio.create_task(telemetry_loop())
@@ -41,6 +51,7 @@ async def websocket_endpoint(websocket: WebSocket):
         "type": "connection_status",
         "data": {"connected": mavlink_bridge.vehicle is not None}
     }))
+    await send_mission_state(websocket)
     try:
         while True:
             # We can receive JSON commands here instead of SocketIO events!
@@ -59,8 +70,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     takeoff_cmd(alt)
                     await emit_ws('mission_status', {'status': f'Manual takeoff \u2192 {alt}m'})
                 elif command == "manual_rtl":
-                    set_mode("RTL")
-                    await emit_ws('mission_status', {'status': 'RTL activated'})
+                    if mission_is_running():
+                        await pause_mission('Operator RTL activated', command_rtl=True)
+                    else:
+                        set_mode("RTL")
+                        await emit_ws('mission_status', {'status': 'RTL activated'})
                 elif command == "start_mission":
                     polygon = payload.get('polygon', [])
                     altitude = float(payload.get('altitude', 20))
@@ -70,9 +84,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     if len(polygon) < 3:
                         await emit_ws('mission_status', {'status': 'Need at least 3 ROI points', 'error': True})
                     else:
-                        # Launch mission loop as a background task
-                        asyncio.create_task(execute_grid_mission(polygon, altitude, spacing, angle_deg))
-                        await emit_ws('mission_status', {'status': f'Mission queued \u2014 alt:{altitude}m spacing:{spacing}m angle:{angle_deg}\u00b0'})
+                        await start_grid_mission(polygon, altitude, spacing, angle_deg)
+                elif command == "resume_mission":
+                    await resume_grid_mission()
                 elif command == "preview_grid":
                     polygon = payload.get('polygon', [])
                     altitude = float(payload.get('altitude', 20))
@@ -86,8 +100,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             'angle': angle_deg
                         })
                 elif command == "abort_mission":
-                    abort_mission()
-                    await emit_ws('mission_status', {'status': 'ABORT — RTL activated', 'aborted': True})
+                    await abort_mission()
                 
             except Exception as e:
                 print(f"Error handling WebSocket message: {e}")

@@ -20,11 +20,19 @@ let drawMarkers = [];
 let drawPolyline = null;
 let waypointMarkers = [];
 let currentWpLine = null;
+let rtlWaypointMarkers = [];
+let missionSnapshot = { status: 'idle' };
+let renderedMissionId = null;
+let latestBatteryLevel = -1;
 const mapHint = document.getElementById('mapHint');
 const btnDrawROI = document.getElementById('btnDrawROI');
 const drawActions = document.getElementById('drawActions');
 const btnUndoPoint = document.getElementById('btnUndoPoint');
 const btnFinishROI = document.getElementById('btnFinishROI');
+const btnPreviewGrid = document.getElementById('btnPreviewGrid');
+const btnClearROI = document.getElementById('btnClearROI');
+const btnStartMission = document.getElementById('btnStartMission');
+const btnResumeMission = document.getElementById('btnResumeMission');
 
 // ── Map Init ──────────────────────────────────────────────────────────────────
 const map = L.map('map', {
@@ -155,10 +163,12 @@ socket.on('telemetry', (d) => {
 
   // Battery
   const pct = d.battery_level || 0;
+  latestBatteryLevel = d.battery_level;
   document.getElementById('tBattPct').textContent = `${pct}%`;
   const bar = document.getElementById('battBar');
   bar.style.width = `${pct}%`;
   bar.style.background = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--yellow)' : 'var(--red)';
+  updateMissionControls();
 
   // GPS
   const hasFix = d.gps_fix >= 3;
@@ -199,7 +209,7 @@ socket.on('telemetry', (d) => {
 socket.on('mission_status', (d) => {
   const isErr = d.error;
   const isOk  = d.complete;
-  const type  = isErr ? 'error' : isOk ? 'success' : 'info';
+  const type  = isErr ? 'error' : isOk ? 'success' : d.paused ? 'warn' : 'info';
   log(d.status, type);
 
   if (d.progress !== undefined) {
@@ -210,10 +220,10 @@ socket.on('mission_status', (d) => {
     drawWaypoints(d.waypoints);
   }
 
-  if (d.complete || d.aborted || d.error) {
-    document.getElementById('btnStartMission').disabled = false;
-  }
+  updateMissionControls();
 });
+
+socket.on('mission_state', applyMissionState);
 
 // ── Connection Status ─────────────────────────────────────────────────────────
 function updateConnStatus(online) {
@@ -230,6 +240,10 @@ setInterval(() => {
 
 // ── ROI Drawing ───────────────────────────────────────────────────────────────
 function startDrawing() {
+  if (missionIsLocked()) {
+    log('Resume or abort the active mission before drawing a new ROI', 'warn');
+    return;
+  }
   clearROI(false);
   isDrawing = true;
   map.getContainer().style.cursor = 'crosshair';
@@ -318,7 +332,7 @@ function updateDrawingStatus() {
 }
 
 function setDrawingControls(active) {
-  btnDrawROI.disabled = active;
+  btnDrawROI.disabled = active || missionIsLocked();
   drawActions.hidden = !active;
   btnUndoPoint.disabled = !active || roiPoints.length === 0;
   btnFinishROI.disabled = !active || roiPoints.length < 3;
@@ -410,8 +424,8 @@ function finishDrawing(e) {
   document.getElementById('roiInfo').textContent =
     `ROI: ${roiPoints.length} pts · ~${area.toFixed(0)} m²`;
 
-  document.getElementById('btnPreviewGrid').disabled = false;
-  document.getElementById('btnStartMission').disabled = false;
+  btnPreviewGrid.disabled = false;
+  btnStartMission.disabled = false;
   log(`ROI defined: ${roiPoints.length} vertices, ~${area.toFixed(0)}m²`, 'success');
 
   // Auto-preview grid with current settings
@@ -424,6 +438,10 @@ function cancelDrawing() {
 }
 
 function clearROI(shouldLog = true) {
+  if (missionIsLocked() && shouldLog !== false) {
+    log('Abort the saved mission before clearing its ROI', 'warn');
+    return;
+  }
   isDrawing = false;
   stopDrawingInteractions();
 
@@ -431,13 +449,15 @@ function clearROI(shouldLog = true) {
   if (drawPolyline) { map.removeLayer(drawPolyline); drawPolyline = null; }
   drawMarkers.forEach(m => map.removeLayer(m)); drawMarkers = [];
   clearWaypoints();
+  drawRtlWaypoints([]);
 
   roiPoints = [];
   document.getElementById('roiInfo').textContent = 'No ROI defined — draw on map';
-  document.getElementById('btnStartMission').disabled = true;
-  document.getElementById('btnPreviewGrid').disabled = true;
+  btnStartMission.disabled = true;
+  btnPreviewGrid.disabled = true;
   document.getElementById('progressBar').style.width = '0%';
   if (shouldLog !== false) log('ROI cleared', 'warn');
+  updateMissionControls();
 }
 
 function calculatePolygonArea(points) {
@@ -456,7 +476,28 @@ function calculatePolygonArea(points) {
 }
 
 // ── Waypoint Visualization ────────────────────────────────────────────────────
-function drawWaypoints(waypoints) {
+function makeWaypointIcon(number, isStart) {
+  const size = Math.max(20, 12 + String(number).length * 6);
+  const startClass = isStart ? ' start' : '';
+
+  return L.divIcon({
+    className: 'waypoint-marker',
+    html: `<span class="waypoint-marker-label${startClass}">${number}</span>`,
+    iconSize: [size, 20],
+    iconAnchor: [size / 2, 10]
+  });
+}
+
+function makeRtlWaypointIcon(number) {
+  return L.divIcon({
+    className: 'rtl-waypoint-marker',
+    html: `<span class="rtl-waypoint-marker-label">RTL WP ${number}</span>`,
+    iconSize: [70, 22],
+    iconAnchor: [35, 11]
+  });
+}
+
+function drawWaypoints(waypoints, shouldLog = true) {
   clearWaypoints();
 
   const latlngs = waypoints.map(w => [w.lat, w.lon]);
@@ -469,19 +510,18 @@ function drawWaypoints(waypoints) {
     dashArray: '4,4'
   }).addTo(map);
 
-  // Waypoint dots
+  // Numbered waypoint dots make the generated route order visible on the map.
   waypoints.forEach((wp, i) => {
-    const m = L.circleMarker([wp.lat, wp.lon], {
-      radius: 3,
-      color: '#ff6b35',
-      fillColor: i === 0 ? '#00ff88' : '#ff6b35',
-      fillOpacity: 1,
-      weight: 1
+    const m = L.marker([wp.lat, wp.lon], {
+      icon: makeWaypointIcon(i + 1, i === 0),
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 200
     }).addTo(map);
     waypointMarkers.push(m);
   });
 
-  log(`Grid path drawn: ${waypoints.length} waypoints`, 'info');
+  if (shouldLog) log(`Grid path drawn: ${waypoints.length} waypoints`, 'info');
 }
 
 function clearWaypoints() {
@@ -490,8 +530,105 @@ function clearWaypoints() {
   if (currentWpLine) { map.removeLayer(currentWpLine); currentWpLine = null; }
 }
 
+function drawRtlWaypoints(waypoints) {
+  rtlWaypointMarkers.forEach(marker => map.removeLayer(marker));
+  rtlWaypointMarkers = [];
+
+  waypoints.forEach((wp, index) => {
+    const number = wp.number || index + 1;
+    const marker = L.marker([wp.lat, wp.lon], {
+      icon: makeRtlWaypointIcon(number),
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 350
+    }).addTo(map);
+    rtlWaypointMarkers.push(marker);
+  });
+}
+
+function missionIsLocked() {
+  return missionSnapshot.status === 'running' || missionSnapshot.status === 'paused';
+}
+
+function updateMissionControls() {
+  const locked = missionIsLocked();
+  const paused = missionSnapshot.status === 'paused';
+  const canResume = paused && latestBatteryLevel > 20;
+
+  btnDrawROI.disabled = isDrawing || locked;
+  btnClearROI.disabled = locked;
+  btnPreviewGrid.disabled = locked || roiPoints.length < 3;
+  btnStartMission.disabled = locked || roiPoints.length < 3;
+  btnResumeMission.hidden = !paused;
+  btnResumeMission.disabled = !canResume;
+
+  ['missionAlt', 'gridSpacing', 'gridAngle'].forEach((id) => {
+    document.getElementById(id).disabled = locked;
+  });
+  document.querySelectorAll('[data-angle-preset]').forEach((button) => {
+    button.disabled = locked;
+  });
+}
+
+function restoreMissionMap(state) {
+  if (Array.isArray(state.polygon) && state.polygon.length >= 3) {
+    roiPoints = state.polygon.map(point => [point[0], point[1]]);
+    if (roiPolygon) map.removeLayer(roiPolygon);
+    roiPolygon = L.polygon(roiPoints, {
+      color: '#00d4ff',
+      fillColor: '#00d4ff',
+      fillOpacity: 0.08,
+      weight: 2,
+      dashArray: '8,4'
+    }).addTo(map);
+    document.getElementById('missionAlt').value = state.altitude;
+    document.getElementById('gridSpacing').value = state.spacing;
+    document.getElementById('gridAngle').value = state.angle;
+    document.getElementById('angleDisplay').textContent = state.angle;
+  }
+
+  if (Array.isArray(state.waypoints) && state.waypoints.length) {
+    drawWaypoints(state.waypoints, false);
+  }
+  drawRtlWaypoints(state.rtl_waypoints || []);
+
+  if (state.id && renderedMissionId !== state.id && roiPolygon) {
+    map.fitBounds(roiPolygon.getBounds(), { padding: [40, 40] });
+    renderedMissionId = state.id;
+  }
+}
+
+function applyMissionState(state) {
+  missionSnapshot = state;
+  if (state.status === 'running' || state.status === 'paused' || state.status === 'completed') {
+    restoreMissionMap(state);
+    document.getElementById('progressBar').style.width = `${state.progress || 0}%`;
+    if (state.status === 'paused') {
+      const latest = (state.rtl_waypoints || []).length;
+      document.getElementById('roiInfo').textContent =
+        latest > 0
+          ? `Mission paused - RTL WP ${latest} saved - recharge and resume`
+          : 'Mission paused - recharge and resume pending grid route';
+    } else if (state.status === 'running') {
+      document.getElementById('roiInfo').textContent =
+        `Mission active - heading to WP ${state.next_wp + 1}/${state.waypoints.length}`;
+    } else if (state.status === 'completed') {
+      document.getElementById('roiInfo').textContent = 'Mission complete - vehicle returning to launch';
+    }
+  } else if (state.status === 'aborted') {
+    clearWaypoints();
+    drawRtlWaypoints([]);
+    renderedMissionId = null;
+  }
+  updateMissionControls();
+}
+
 // ── Mission Commands ──────────────────────────────────────────────────────────
 function startMission() {
+  if (missionIsLocked()) {
+    log('Resume or abort the saved mission first', 'warn');
+    return;
+  }
   if (roiPoints.length < 3) {
     log('Draw an ROI polygon first!', 'error');
     return;
@@ -500,7 +637,7 @@ function startMission() {
   const spacing  = parseInt(document.getElementById('gridSpacing').value);
   const angle    = parseInt(document.getElementById('gridAngle').value);
 
-  document.getElementById('btnStartMission').disabled = true;
+  btnStartMission.disabled = true;
   document.getElementById('progressBar').style.width = '0%';
 
   socket.emit('start_mission', {
@@ -513,9 +650,14 @@ function startMission() {
   log(`Mission started — alt: ${altitude}m, spacing: ${spacing}m, angle: ${angle}°`, 'success');
 }
 
+function resumeMission() {
+  socket.emit('resume_mission');
+  log('Resume mission requested', 'info');
+}
+
 function abortMission() {
   socket.emit('abort_mission');
-  log('ABORT command sent', 'error');
+  log('ABORT command sent - mission will be discarded', 'error');
 }
 
 function manualTakeoff() {
@@ -653,6 +795,7 @@ btnFinishROI.addEventListener('click', () => finishDrawing());
 document.getElementById('btnPreviewGrid').addEventListener('click', previewGrid);
 document.getElementById('btnClearROI').addEventListener('click', clearROI);
 document.getElementById('btnStartMission').addEventListener('click', startMission);
+btnResumeMission.addEventListener('click', resumeMission);
 document.getElementById('btnAbort').addEventListener('click', abortMission);
 document.getElementById('btnManualTakeoff').addEventListener('click', manualTakeoff);
 document.getElementById('btnManualRTL').addEventListener('click', manualRTL);

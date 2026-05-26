@@ -27,3 +27,6 @@ dist-ssr/
 
 # Mac
 .DS_Store
+
+plan.md
+backend/runtime/
