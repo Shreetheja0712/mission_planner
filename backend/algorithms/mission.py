@@ -1,3 +1,4 @@
+
 import asyncio
 import json
 import math
@@ -267,7 +268,7 @@ async def _arm_for_flight(mission_id, resuming):
         if not _same_running_mission(mission_id):
             return mission_state.get('status', 'aborted')
         if attempt > 0:
-            if resuming and attempt == 1:
+            if resuming:
                 await emit_status('Vehicle not armed yet after reconnect; retrying arm command...')
             set_mode('GUIDED')
         arm_vehicle()
@@ -328,7 +329,6 @@ async def _run_mission(mission_id, resuming=False):
         if reached != 'reached':
             if reached == 'timeout':
                 if resuming:
-                    set_mode('RTL')
                     await _pause_resume_attempt(
                         mission_id, f'Takeoff not confirmed at {telemetry["alt"]}m'
                     )
