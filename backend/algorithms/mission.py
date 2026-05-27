@@ -22,6 +22,10 @@ RUNNING_STATES = {'running', 'paused'}
 ARM_RETRY_INTERVAL_SECONDS = 3
 INITIAL_ARM_TIMEOUT_SECONDS = 15
 RESUME_ARM_TIMEOUT_SECONDS = 60
+BATTERY_RESERVE_PERCENT = 20
+BATTERY_DRAIN_PERCENT_PER_MINUTE = 2.2
+TAKEOFF_DRAIN_PERCENT_PER_METER = 0.08
+DEFAULT_CRUISE_SPEED_MPS = 5.0
 mission_state = {'status': 'idle'}
 rtl_detection_armed = False
 
@@ -108,6 +112,8 @@ def get_mission_snapshot():
         and battery > 20
         and is_vehicle_connected()
     )
+    if mission_state.get('status') in RUNNING_STATES and mission_state.get('waypoints'):
+        snapshot['battery_prediction'] = _remaining_battery_prediction()
     return snapshot
 
 
@@ -134,6 +140,78 @@ def get_distance_m(lat1, lon1, lat2, lon2):
     dlat = lat2 - lat1
     dlon = lon2 - lon1
     return math.sqrt(dlat**2 + dlon**2) * 1.113195e5
+
+
+def _normalize_waypoint(wp):
+    if isinstance(wp, dict):
+        return {
+            'lat': float(wp['lat']),
+            'lon': float(wp['lon']),
+            'alt': float(wp.get('alt', mission_state.get('altitude', 0))),
+        }
+    return {'lat': float(wp[0]), 'lon': float(wp[1]), 'alt': float(wp[2])}
+
+
+def predict_battery_usage(
+    waypoints,
+    altitude=None,
+    start_lat=None,
+    start_lon=None,
+    battery_level=None,
+):
+    normalized = [_normalize_waypoint(wp) for wp in waypoints]
+    battery = telemetry.get('battery_level', -1) if battery_level is None else battery_level
+    distance_m = 0.0
+
+    if normalized:
+        previous = None
+        if start_lat is not None and start_lon is not None:
+            previous = {'lat': float(start_lat), 'lon': float(start_lon)}
+        for waypoint in normalized:
+            if previous:
+                distance_m += get_distance_m(
+                    previous['lat'],
+                    previous['lon'],
+                    waypoint['lat'],
+                    waypoint['lon'],
+                )
+            previous = waypoint
+
+    target_altitude = float(altitude if altitude is not None else mission_state.get('altitude', 0))
+    flight_time_seconds = distance_m / DEFAULT_CRUISE_SPEED_MPS
+    cruise_battery = (flight_time_seconds / 60.0) * BATTERY_DRAIN_PERCENT_PER_MINUTE
+    takeoff_battery = max(target_altitude, 0) * TAKEOFF_DRAIN_PERCENT_PER_METER
+    required = min(100.0, cruise_battery + takeoff_battery)
+    projected = None if battery < 0 else max(0.0, float(battery) - required)
+
+    return {
+        'distance_m': round(distance_m, 1),
+        'flight_time_s': round(flight_time_seconds),
+        'battery_required_pct': round(required, 1),
+        'projected_battery_pct': None if projected is None else round(projected, 1),
+        'reserve_battery_pct': BATTERY_RESERVE_PERCENT,
+        'safe': projected is None or projected > BATTERY_RESERVE_PERCENT,
+        'model': {
+            'cruise_speed_mps': DEFAULT_CRUISE_SPEED_MPS,
+            'drain_pct_per_min': BATTERY_DRAIN_PERCENT_PER_MINUTE,
+            'takeoff_pct_per_m': TAKEOFF_DRAIN_PERCENT_PER_METER,
+        },
+    }
+
+
+def _remaining_battery_prediction():
+    waypoints = mission_state.get('waypoints', [])[mission_state.get('next_wp', 0):]
+    start_lat = telemetry.get('lat')
+    start_lon = telemetry.get('lon')
+    if not start_lat and not start_lon:
+        start_lat = None
+        start_lon = None
+    return predict_battery_usage(
+        waypoints,
+        altitude=mission_state.get('altitude', 0),
+        start_lat=start_lat,
+        start_lon=start_lon,
+    )
 
 
 def _same_running_mission(mission_id):
@@ -444,6 +522,7 @@ async def start_grid_mission(polygon, altitude, spacing, angle_deg):
         waypoints=mission_state['waypoints'],
         total_wp=len(waypoints),
         progress=0,
+        battery_prediction=_remaining_battery_prediction(),
     )
     await emit_mission_state()
     asyncio.create_task(_run_mission(mission_state['id']))

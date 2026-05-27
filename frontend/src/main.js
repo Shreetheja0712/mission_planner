@@ -433,8 +433,9 @@ function applyMissionState(state) {
           ? `Mission paused - RTL WP ${latest} saved - recharge and resume`
           : 'Mission paused - recharge and resume pending grid route';
     } else if (state.status === 'running') {
+      const batteryText = formatBatteryPrediction(state.battery_prediction);
       document.getElementById('roiInfo').textContent =
-        `Mission active - heading to WP ${state.next_wp + 1}/${state.waypoints.length}`;
+        `Mission active - heading to WP ${state.next_wp + 1}/${state.waypoints.length}${batteryText}`;
     } else if (state.status === 'completed') {
       document.getElementById('roiInfo').textContent = 'Mission complete - vehicle returning to launch';
     }
@@ -611,9 +612,21 @@ socket.on('grid_preview', (data) => {
   btnExportPlan.disabled = false;
   drawWaypoints(data.waypoints);
   const angle = data.angle;
+  const batteryText = formatBatteryPrediction(data.battery_prediction);
   document.getElementById('roiInfo').textContent =
-    `ROI ready · ${data.total_wp} waypoints · ${angle}° grid`;
+    `ROI ready - ${data.total_wp} waypoints - ${angle} deg grid${batteryText}`;
 });
+
+function formatBatteryPrediction(prediction) {
+  if (!prediction) return '';
+  const minutes = Math.ceil((prediction.flight_time_s || 0) / 60);
+  const projected = prediction.projected_battery_pct;
+  const reserve = prediction.reserve_battery_pct;
+  const suffix = projected === null || projected === undefined
+    ? ` - est ${minutes} min`
+    : ` - est ${minutes} min - battery ${projected}% after`;
+  return prediction.safe ? suffix : `${suffix} - LOW RESERVE (<${reserve}%)`;
+}
 
 function exportMissionPlan() {
   if (currentPreviewWaypoints.length === 0) return;

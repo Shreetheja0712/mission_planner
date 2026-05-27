@@ -120,6 +120,33 @@ class MissionStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mission.mission_state['status'], 'paused')
         self.goto.assert_not_called()
 
+    def test_battery_prediction_estimates_remaining_mission_reserve(self):
+        prediction = mission.predict_battery_usage(
+            [
+                {'lat': -35.1, 'lon': 149.1, 'alt': 20},
+                {'lat': -35.101, 'lon': 149.1, 'alt': 20},
+            ],
+            altitude=20,
+            start_lat=-35.1,
+            start_lon=149.1,
+            battery_level=25,
+        )
+
+        self.assertGreater(prediction['battery_required_pct'], 1.6)
+        self.assertLess(prediction['projected_battery_pct'], 25)
+        self.assertEqual(prediction['reserve_battery_pct'], 20)
+        self.assertTrue(prediction['safe'])
+
+    def test_mission_snapshot_includes_battery_prediction(self):
+        snapshot = mission.get_mission_snapshot()
+
+        self.assertIn('battery_prediction', snapshot)
+        self.assertEqual(
+            snapshot['battery_prediction']['projected_battery_pct'],
+            98.4,
+        )
+        self.assertTrue(snapshot['battery_prediction']['safe'])
+
     async def test_resume_rejoins_latest_rtl_point_before_pending_grid_point(self):
         mission.mission_state['rtl_waypoints'] = [
             {'number': 1, 'label': 'RTL WP 1', 'lat': -35.05, 'lon': 149.05, 'alt': 8}

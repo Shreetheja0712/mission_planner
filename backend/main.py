@@ -19,6 +19,7 @@ from algorithms.mission import (
     load_mission_state,
     mission_is_running,
     pause_mission,
+    predict_battery_usage,
     resume_grid_mission,
     send_mission_state,
     start_grid_mission,
@@ -104,7 +105,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         await emit_ws('grid_preview', {
                             'waypoints': [{'lat': w[0], 'lon': w[1]} for w in waypoints],
                             'total_wp': len(waypoints),
-                            'angle': angle_deg
+                            'angle': angle_deg,
+                            'battery_prediction': predict_battery_usage(
+                                waypoints,
+                                altitude=altitude,
+                            ),
                         })
                 elif command == "abort_mission":
                     await abort_mission()
