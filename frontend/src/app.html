@@ -158,3 +158,48 @@
   </div>
 
 </aside>
+
+<div class="mission-confirm" id="missionConfirm" hidden>
+  <div class="mission-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="missionConfirmTitle">
+    <div class="section-title" id="missionConfirmTitle">Confirm Mission</div>
+    <div class="confirm-grid">
+      <div class="confirm-item">
+        <span>ROI Points</span>
+        <strong id="confirmRoiPoints">--</strong>
+      </div>
+      <div class="confirm-item">
+        <span>Waypoints</span>
+        <strong id="confirmWaypoints">--</strong>
+      </div>
+      <div class="confirm-item">
+        <span>Altitude</span>
+        <strong id="confirmAltitude">--</strong>
+      </div>
+      <div class="confirm-item">
+        <span>Spacing</span>
+        <strong id="confirmSpacing">--</strong>
+      </div>
+      <div class="confirm-item">
+        <span>Grid Angle</span>
+        <strong id="confirmAngle">--</strong>
+      </div>
+      <div class="confirm-item">
+        <span>Est. Time</span>
+        <strong id="confirmTime">--</strong>
+      </div>
+      <div class="confirm-item">
+        <span>Est. Distance</span>
+        <strong id="confirmDistance">--</strong>
+      </div>
+      <div class="confirm-item">
+        <span>Battery After</span>
+        <strong id="confirmBattery">--</strong>
+      </div>
+    </div>
+    <div class="confirm-warning" id="confirmWarning" hidden></div>
+    <div class="confirm-actions">
+      <button class="btn btn-ghost" id="btnCancelMissionConfirm">Cancel</button>
+      <button class="btn btn-primary" id="btnConfirmMissionStart">Confirm Start</button>
+    </div>
+  </div>
+</div>

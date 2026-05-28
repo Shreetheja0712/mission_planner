@@ -19,6 +19,8 @@ let drawMarkers = [];
 let drawPolyline = null;
 let renderedMissionId = null;
 let currentPreviewWaypoints = [];
+let currentPreviewBatteryPrediction = null;
+let pendingMissionPlan = null;
 const mapHint = document.getElementById('mapHint');
 const btnDrawROI = document.getElementById('btnDrawROI');
 const drawActions = document.getElementById('drawActions');
@@ -30,6 +32,9 @@ const btnClearROI = document.getElementById('btnClearROI');
 const btnStartMission = document.getElementById('btnStartMission');
 const btnResumeMission = document.getElementById('btnResumeMission');
 const btnMissionRTL = document.getElementById('btnMissionRTL');
+const missionConfirm = document.getElementById('missionConfirm');
+const btnCancelMissionConfirm = document.getElementById('btnCancelMissionConfirm');
+const btnConfirmMissionStart = document.getElementById('btnConfirmMissionStart');
 const missionStore = createMissionStore();
 
 // ── Map Init ──────────────────────────────────────────────────────────────────
@@ -340,6 +345,8 @@ function clearROI(shouldLog = true) {
 
   roiPoints = [];
   currentPreviewWaypoints = [];
+  currentPreviewBatteryPrediction = null;
+  closeMissionConfirm();
   document.getElementById('roiInfo').textContent = 'No ROI defined — draw on map';
   btnStartMission.disabled = true;
   btnPreviewGrid.disabled = true;
@@ -461,17 +468,43 @@ function startMission() {
   const spacing  = parseInt(document.getElementById('gridSpacing').value);
   const angle    = parseInt(document.getElementById('gridAngle').value);
 
+  if (currentPreviewWaypoints.length === 0) {
+    requestGridPreview();
+    log('Preview the grid before starting so battery prediction can be checked', 'warn');
+    return;
+  }
+
+  pendingMissionPlan = {
+    polygon: roiPoints.map(point => [...point]),
+    altitude,
+    spacing,
+    angle,
+    waypoints: currentPreviewWaypoints,
+    batteryPrediction: currentPreviewBatteryPrediction,
+  };
+  openMissionConfirm(pendingMissionPlan);
+}
+
+function confirmMissionStart() {
+  if (!pendingMissionPlan) return;
+
+  const plan = pendingMissionPlan;
   btnStartMission.disabled = true;
   document.getElementById('progressBar').style.width = '0%';
+  closeMissionConfirm();
 
   socket.emit('start_mission', {
-    polygon: roiPoints,
-    altitude: altitude,
-    spacing: spacing,
-    angle: angle
+    polygon: plan.polygon,
+    altitude: plan.altitude,
+    spacing: plan.spacing,
+    angle: plan.angle,
   });
 
-  log(`Mission started — alt: ${altitude}m, spacing: ${spacing}m, angle: ${angle}°`, 'success');
+  log(
+    `Mission started - alt: ${plan.altitude}m, spacing: ${plan.spacing}m, angle: ${plan.angle} deg`,
+    'success'
+  );
+  pendingMissionPlan = null;
 }
 
 function resumeMission() {
@@ -598,6 +631,8 @@ function setAngle(deg) {
 }
 
 function requestGridPreview() {
+  currentPreviewWaypoints = [];
+  currentPreviewBatteryPrediction = null;
   btnExportPlan.disabled = true;
   socket.emit('preview_grid', {
     polygon: roiPoints,
@@ -609,13 +644,68 @@ function requestGridPreview() {
 
 socket.on('grid_preview', (data) => {
   currentPreviewWaypoints = data.waypoints;
-  btnExportPlan.disabled = false;
+  currentPreviewBatteryPrediction = data.battery_prediction || null;
+  btnExportPlan.disabled = currentPreviewWaypoints.length === 0;
   drawWaypoints(data.waypoints);
   const angle = data.angle;
   const batteryText = formatBatteryPrediction(data.battery_prediction);
   document.getElementById('roiInfo').textContent =
     `ROI ready - ${data.total_wp} waypoints - ${angle} deg grid${batteryText}`;
 });
+
+function formatDuration(seconds) {
+  const totalSeconds = Math.max(0, Math.round(seconds || 0));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return minutes > 0
+    ? `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s`
+    : `${remainingSeconds}s`;
+}
+
+function formatDistance(meters) {
+  const distance = Number(meters || 0);
+  return distance >= 1000
+    ? `${(distance / 1000).toFixed(2)} km`
+    : `${Math.round(distance)} m`;
+}
+
+function openMissionConfirm(plan) {
+  const prediction = plan.batteryPrediction;
+  document.getElementById('confirmRoiPoints').textContent = plan.polygon.length;
+  document.getElementById('confirmWaypoints').textContent = plan.waypoints.length;
+  document.getElementById('confirmAltitude').textContent = `${plan.altitude} m`;
+  document.getElementById('confirmSpacing').textContent = `${plan.spacing} m`;
+  document.getElementById('confirmAngle').textContent = `${plan.angle} deg`;
+  document.getElementById('confirmTime').textContent = prediction
+    ? formatDuration(prediction.flight_time_s)
+    : '--';
+  document.getElementById('confirmDistance').textContent = prediction
+    ? formatDistance(prediction.distance_m)
+    : '--';
+
+  const batteryAfter = prediction?.projected_battery_pct;
+  document.getElementById('confirmBattery').textContent =
+    batteryAfter === null || batteryAfter === undefined ? 'Unknown' : `${batteryAfter}%`;
+
+  const warning = document.getElementById('confirmWarning');
+  if (!prediction) {
+    warning.textContent = 'Battery prediction is unavailable for this preview.';
+    warning.hidden = false;
+  } else if (!prediction.safe) {
+    warning.textContent =
+      `Low reserve: projected battery is below ${prediction.reserve_battery_pct}% after this route.`;
+    warning.hidden = false;
+  } else {
+    warning.hidden = true;
+  }
+
+  missionConfirm.hidden = false;
+  btnConfirmMissionStart.focus();
+}
+
+function closeMissionConfirm() {
+  missionConfirm.hidden = true;
+}
 
 function formatBatteryPrediction(prediction) {
   if (!prediction) return '';
@@ -661,6 +751,10 @@ document.getElementById('gridSpacing').addEventListener('change', () => {
   if (roiPoints.length >= 3) requestGridPreview();
 });
 
+document.getElementById('missionAlt').addEventListener('change', () => {
+  if (roiPoints.length >= 3) requestGridPreview();
+});
+
 // ── Grid Preview (angle slider) end ───────────────────────────────────────────
 
 btnDrawROI.addEventListener('click', startDrawing);
@@ -672,11 +766,19 @@ document.getElementById('btnClearROI').addEventListener('click', clearROI);
 document.getElementById('btnStartMission').addEventListener('click', startMission);
 btnResumeMission.addEventListener('click', resumeMission);
 btnMissionRTL.addEventListener('click', missionRTL);
+btnCancelMissionConfirm.addEventListener('click', closeMissionConfirm);
+btnConfirmMissionStart.addEventListener('click', confirmMissionStart);
+missionConfirm.addEventListener('click', (event) => {
+  if (event.target === missionConfirm) closeMissionConfirm();
+});
 document.getElementById('btnAbort').addEventListener('click', abortMission);
 document.getElementById('btnManualTakeoff').addEventListener('click', manualTakeoff);
 document.getElementById('btnManualRTL').addEventListener('click', manualRTL);
 document.querySelectorAll('[data-angle-preset]').forEach((button) => {
   button.addEventListener('click', () => setAngle(parseInt(button.dataset.anglePreset)));
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !missionConfirm.hidden) closeMissionConfirm();
 });
 
 missionStore.subscribe(updateMissionControls);
