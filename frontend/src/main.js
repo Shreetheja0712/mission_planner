@@ -119,6 +119,10 @@ socket.on('mission_status', (d) => {
   if (d.waypoints) {
     drawWaypoints(d.waypoints);
   }
+
+  if (d.battery_prediction) {
+    renderMissionChecks(d.battery_prediction, 'live');
+  }
 });
 
 socket.on('mission_state', applyMissionState);
@@ -346,6 +350,7 @@ function clearROI(shouldLog = true) {
   roiPoints = [];
   currentPreviewWaypoints = [];
   currentPreviewBatteryPrediction = null;
+  renderMissionChecks(null);
   closeMissionConfirm();
   document.getElementById('roiInfo').textContent = 'No ROI defined — draw on map';
   btnStartMission.disabled = true;
@@ -434,22 +439,26 @@ function applyMissionState(state) {
     restoreMissionMap(state);
     document.getElementById('progressBar').style.width = `${state.progress || 0}%`;
     if (state.status === 'paused') {
+      renderMissionChecks(state.battery_prediction, 'paused');
       const latest = (state.rtl_waypoints || []).length;
       document.getElementById('roiInfo').textContent =
         latest > 0
           ? `Mission paused - RTL WP ${latest} saved - recharge and resume`
           : 'Mission paused - recharge and resume pending grid route';
     } else if (state.status === 'running') {
+      renderMissionChecks(state.battery_prediction, 'live');
       const batteryText = formatBatteryPrediction(state.battery_prediction);
       document.getElementById('roiInfo').textContent =
         `Mission active - heading to WP ${state.next_wp + 1}/${state.waypoints.length}${batteryText}`;
     } else if (state.status === 'completed') {
+      renderMissionChecks(state.battery_prediction, 'completed');
       document.getElementById('roiInfo').textContent = 'Mission complete - vehicle returning to launch';
     }
   } else if (state.status === 'aborted') {
     missionLayers.clearWaypoints();
     missionLayers.drawRtlWaypoints([]);
     renderedMissionId = null;
+    renderMissionChecks(null);
   }
   missionStore.setMission(state);
 }
@@ -633,6 +642,7 @@ function setAngle(deg) {
 function requestGridPreview() {
   currentPreviewWaypoints = [];
   currentPreviewBatteryPrediction = null;
+  renderMissionChecks(null, 'loading');
   btnExportPlan.disabled = true;
   socket.emit('preview_grid', {
     polygon: roiPoints,
@@ -645,6 +655,7 @@ function requestGridPreview() {
 socket.on('grid_preview', (data) => {
   currentPreviewWaypoints = data.waypoints;
   currentPreviewBatteryPrediction = data.battery_prediction || null;
+  renderMissionChecks(currentPreviewBatteryPrediction, 'preview');
   btnExportPlan.disabled = currentPreviewWaypoints.length === 0;
   drawWaypoints(data.waypoints);
   const angle = data.angle;
@@ -667,6 +678,48 @@ function formatDistance(meters) {
   return distance >= 1000
     ? `${(distance / 1000).toFixed(2)} km`
     : `${Math.round(distance)} m`;
+}
+
+function renderMissionChecks(prediction, phase = 'idle') {
+  const status = document.getElementById('missionCheckStatus');
+  const time = document.getElementById('missionCheckTime');
+  const distance = document.getElementById('missionCheckDistance');
+  const required = document.getElementById('missionCheckRequired');
+  const projected = document.getElementById('missionCheckProjected');
+
+  status.classList.remove('safe', 'warn', 'unknown');
+
+  if (!prediction) {
+    time.textContent = '--';
+    distance.textContent = '--';
+    required.textContent = '--';
+    projected.textContent = '--';
+    status.classList.add('unknown');
+    status.querySelector('span:last-child').textContent =
+      phase === 'loading' ? 'Checking mission battery...' : 'No mission prediction yet';
+    return;
+  }
+
+  const batteryAfter = prediction.projected_battery_pct;
+  const reserve = prediction.reserve_battery_pct;
+
+  time.textContent = formatDuration(prediction.flight_time_s);
+  distance.textContent = formatDistance(prediction.distance_m);
+  required.textContent = `${prediction.battery_required_pct}%`;
+  projected.textContent =
+    batteryAfter === null || batteryAfter === undefined ? 'Unknown' : `${batteryAfter}%`;
+
+  if (prediction.safe) {
+    status.classList.add('safe');
+    status.querySelector('span:last-child').textContent =
+      phase === 'preview'
+        ? `Check passed: reserve stays above ${reserve}%`
+        : `Battery prediction OK: reserve above ${reserve}%`;
+  } else {
+    status.classList.add('warn');
+    status.querySelector('span:last-child').textContent =
+      `Low reserve: projected battery below ${reserve}%`;
+  }
 }
 
 function openMissionConfirm(plan) {
