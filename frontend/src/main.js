@@ -41,6 +41,7 @@ const missionStore = createMissionStore();
 const map = L.map('map', {
   center: [-35.363261, 149.165230],  // ArduPilot default SITL location (Canberra, AU)
   zoom: 17,
+  maxZoom: 19,
   zoomControl: true,
   attributionControl: false
 });
