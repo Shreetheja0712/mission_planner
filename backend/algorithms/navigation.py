@@ -27,7 +27,48 @@ def point_in_polygon_xy(px, py, polygon_xy):
         j = i
     return inside
 
-def generate_grid_waypoints(polygon, altitude, spacing_m=20, angle_deg=0):
+
+def _build_sweep_path(rows, reverse_rows=False, start_from_right=False):
+    ordered_rows = list(reversed(rows)) if reverse_rows else rows
+    waypoints = []
+
+    for index, row_points in enumerate(ordered_rows):
+        if start_from_right == (index % 2 == 0):
+            points = list(reversed(row_points))
+        else:
+            points = row_points
+
+        waypoints.append(points[0])
+        if len(points) > 1:
+            waypoints.append(points[-1])
+
+    return waypoints
+
+
+def _orient_sweep_from_home(rows, home_xy):
+    candidates = [
+        _build_sweep_path(rows, reverse_rows=False, start_from_right=False),
+        _build_sweep_path(rows, reverse_rows=False, start_from_right=True),
+        _build_sweep_path(rows, reverse_rows=True, start_from_right=False),
+        _build_sweep_path(rows, reverse_rows=True, start_from_right=True),
+    ]
+
+    def first_leg_distance(path):
+        if not path:
+            return math.inf
+        return math.hypot(path[0][0] - home_xy[0], path[0][1] - home_xy[1])
+
+    return min(candidates, key=first_leg_distance)
+
+
+def generate_grid_waypoints(
+    polygon,
+    altitude,
+    spacing_m=20,
+    angle_deg=0,
+    start_lat=None,
+    start_lon=None,
+):
     if len(polygon) < 3:
         return []
 
@@ -43,9 +84,8 @@ def generate_grid_waypoints(polygon, altitude, spacing_m=20, angle_deg=0):
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
 
-    waypoints_rot = []
+    rows_rot = []
     current_y = min_y
-    row = 0
 
     while current_y <= max_y + spacing_m:
         row_points = []
@@ -57,14 +97,16 @@ def generate_grid_waypoints(polygon, altitude, spacing_m=20, angle_deg=0):
             current_x += step
 
         if row_points:
-            if row % 2 == 1:
-                row_points = row_points[::-1]
-            waypoints_rot.append(row_points[0])
-            if len(row_points) > 1:
-                waypoints_rot.append(row_points[-1])
+            rows_rot.append(row_points)
 
         current_y += spacing_m
-        row += 1
+
+    if start_lat is not None and start_lon is not None:
+        home_xy = latlon_to_xy(float(start_lat), float(start_lon), origin_lat, origin_lon)
+        home_rot = rotate_point(home_xy[0], home_xy[1], -angle_rad)
+        waypoints_rot = _orient_sweep_from_home(rows_rot, home_rot)
+    else:
+        waypoints_rot = _build_sweep_path(rows_rot)
 
     waypoints = []
     for (rx, ry) in waypoints_rot:

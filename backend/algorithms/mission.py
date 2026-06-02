@@ -26,6 +26,9 @@ BATTERY_RESERVE_PERCENT = 20
 BATTERY_DRAIN_PERCENT_PER_MINUTE = 2.2
 TAKEOFF_DRAIN_PERCENT_PER_METER = 0.08
 DEFAULT_CRUISE_SPEED_MPS = 5.0
+WAYPOINT_TIMEOUT_MIN_SECONDS = 60
+WAYPOINT_TIMEOUT_BUFFER_SECONDS = 30
+WAYPOINT_TIMEOUT_MULTIPLIER = 1.8
 mission_state = {'status': 'idle'}
 rtl_detection_armed = False
 
@@ -201,11 +204,7 @@ def predict_battery_usage(
 
 def _remaining_battery_prediction():
     waypoints = mission_state.get('waypoints', [])[mission_state.get('next_wp', 0):]
-    start_lat = telemetry.get('lat')
-    start_lon = telemetry.get('lon')
-    if not start_lat and not start_lon:
-        start_lat = None
-        start_lon = None
+    start_lat, start_lon = _current_position()
     return predict_battery_usage(
         waypoints,
         altitude=mission_state.get('altitude', 0),
@@ -235,6 +234,30 @@ def _current_rtl_waypoint():
         'lon': lon,
         'alt': telemetry.get('alt', 0),
     }
+
+
+def _current_position():
+    lat = telemetry.get('lat')
+    lon = telemetry.get('lon')
+    if lat is None or lon is None or (not lat and not lon):
+        return None, None
+    return lat, lon
+
+
+def _arrival_timeout_seconds(target_lat, target_lon):
+    lat = telemetry.get('lat', 0)
+    lon = telemetry.get('lon', 0)
+    if not lat and not lon:
+        return WAYPOINT_TIMEOUT_MIN_SECONDS
+
+    distance_seconds = get_distance_m(lat, lon, target_lat, target_lon) / DEFAULT_CRUISE_SPEED_MPS
+    return max(
+        WAYPOINT_TIMEOUT_MIN_SECONDS,
+        math.ceil(
+            distance_seconds * WAYPOINT_TIMEOUT_MULTIPLIER
+            + WAYPOINT_TIMEOUT_BUFFER_SECONDS
+        ),
+    )
 
 
 async def pause_mission(reason, command_rtl=True):
@@ -324,12 +347,14 @@ async def _fail_mission(mission_id, msg):
     await emit_mission_state()
 
 
-async def _pause_resume_attempt(mission_id, reason):
+async def _pause_resume_attempt(mission_id, reason, command_rtl=False):
     if not _same_running_mission(mission_id):
         return
     mission_state['status'] = 'paused'
     mission_state['pause_reason'] = reason
     _persist_state()
+    if command_rtl:
+        set_mode('RTL')
     await emit_status(
         f'Resume paused: {reason}. Try Resume Mission again when the vehicle is ready.',
         paused=True,
@@ -408,7 +433,9 @@ async def _run_mission(mission_id, resuming=False):
             if reached == 'timeout':
                 if resuming:
                     await _pause_resume_attempt(
-                        mission_id, f'Takeoff not confirmed at {telemetry["alt"]}m'
+                        mission_id,
+                        f'Takeoff not confirmed at {telemetry["alt"]}m',
+                        command_rtl=True,
                     )
                 else:
                     await _fail_mission(mission_id, f'Takeoff timeout at {telemetry["alt"]}m')
@@ -425,7 +452,7 @@ async def _run_mission(mission_id, resuming=False):
                 lambda: get_distance_m(
                     telemetry['lat'], telemetry['lon'], rtl_wp['lat'], rtl_wp['lon']
                 ) < 8.0,
-                timeout=60,
+                timeout=_arrival_timeout_seconds(rtl_wp['lat'], rtl_wp['lon']),
             )
             if rejoined != 'reached':
                 if rejoined == 'timeout':
@@ -452,7 +479,7 @@ async def _run_mission(mission_id, resuming=False):
                 lambda: get_distance_m(
                     telemetry['lat'], telemetry['lon'], wp['lat'], wp['lon']
                 ) < 8.0,
-                timeout=60,
+                timeout=_arrival_timeout_seconds(wp['lat'], wp['lon']),
             )
             if arrival != 'reached':
                 if arrival == 'timeout':
@@ -496,7 +523,15 @@ async def start_grid_mission(polygon, altitude, spacing, angle_deg):
         await emit_mission_state()
         return False
 
-    waypoints = generate_grid_waypoints(polygon, altitude, spacing, angle_deg)
+    start_lat, start_lon = _current_position()
+    waypoints = generate_grid_waypoints(
+        polygon,
+        altitude,
+        spacing,
+        angle_deg,
+        start_lat=start_lat,
+        start_lon=start_lon,
+    )
     if not waypoints:
         await emit_status('No waypoints - try larger ROI or smaller spacing', error=True)
         return False

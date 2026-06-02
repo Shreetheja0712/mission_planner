@@ -12,7 +12,7 @@ from drone.mavlink_bridge import (
     takeoff_cmd,
     telemetry_loop,
 )
-from drone.telemetry_queue import connected_clients
+from drone.telemetry_queue import connected_clients, telemetry
 from algorithms.mission import (
     abort_mission,
     emit_ws,
@@ -101,7 +101,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     spacing = float(payload.get('spacing', 20))
                     angle_deg = float(payload.get('angle', 0))
                     if len(polygon) >= 3:
-                        waypoints = generate_grid_waypoints(polygon, altitude, spacing, angle_deg)
+                        start_lat = telemetry.get('lat')
+                        start_lon = telemetry.get('lon')
+                        if not start_lat and not start_lon:
+                            start_lat = None
+                            start_lon = None
+                        waypoints = generate_grid_waypoints(
+                            polygon,
+                            altitude,
+                            spacing,
+                            angle_deg,
+                            start_lat=start_lat,
+                            start_lon=start_lon,
+                        )
                         await emit_ws('grid_preview', {
                             'waypoints': [{'lat': w[0], 'lon': w[1]} for w in waypoints],
                             'total_wp': len(waypoints),
@@ -109,6 +121,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             'battery_prediction': predict_battery_usage(
                                 waypoints,
                                 altitude=altitude,
+                                start_lat=start_lat,
+                                start_lon=start_lon,
                             ),
                         })
                 elif command == "abort_mission":

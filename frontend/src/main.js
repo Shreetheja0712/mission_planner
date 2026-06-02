@@ -580,22 +580,7 @@ function clientGenerateGrid(polygon, spacingM) {
 
 function previewGrid() {
   if (roiPoints.length < 3) return;
-  const spacing = parseInt(document.getElementById('gridSpacing').value) || 20;
-  const waypoints = clientGenerateGrid(roiPoints, spacing);
-
-  if (!waypoints.length) {
-    log('No waypoints — try smaller spacing or larger ROI', 'warn');
-    return;
-  }
-
-  // Draw preview (same style as live mission)
-  drawWaypoints(waypoints.map(w => ({ lat: w[0], lon: w[1] })));
-  log(`Grid preview: ${waypoints.length} waypoints at ${spacing}m spacing`, 'info');
-
-  // Update ROI info
-  const area = calculatePolygonArea(roiPoints);
-  document.getElementById('roiInfo').textContent =
-    `ROI: ${roiPoints.length} pts · ~${area.toFixed(0)}m² · ${waypoints.length} WPs`;
+  requestGridPreview();
 }
 
 // ── Log Helper ────────────────────────────────────────────────────────────────

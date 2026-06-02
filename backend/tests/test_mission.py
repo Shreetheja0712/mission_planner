@@ -147,6 +147,41 @@ class MissionStateTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(snapshot['battery_prediction']['safe'])
 
+    def test_arrival_timeout_scales_with_target_distance(self):
+        mission.telemetry['lat'] = -35.0
+        mission.telemetry['lon'] = 149.0
+
+        close_timeout = mission._arrival_timeout_seconds(-35.0001, 149.0)
+        far_timeout = mission._arrival_timeout_seconds(-35.02, 149.0)
+
+        self.assertEqual(close_timeout, mission.WAYPOINT_TIMEOUT_MIN_SECONDS)
+        self.assertGreater(far_timeout, mission.WAYPOINT_TIMEOUT_MIN_SECONDS)
+
+    async def test_first_waypoint_wait_uses_distance_based_timeout(self):
+        mission.mission_state['next_wp'] = 0
+        mission.mission_state['waypoints'] = [
+            {'lat': -35.02, 'lon': 149.0, 'alt': 20},
+        ]
+        mission.telemetry['lat'] = -35.0
+        mission.telemetry['lon'] = 149.0
+        wait_for_condition = AsyncMock(side_effect=['reached', 'reached', 'timeout'])
+        with (
+            patch.object(mission, '_monitored_delay', new=AsyncMock(return_value=True)),
+            patch.object(mission, 'wait_for_condition', new=wait_for_condition),
+        ):
+            await mission._run_mission('mission-1')
+
+        waypoint_wait = wait_for_condition.call_args_list[-1]
+        self.assertGreater(
+            waypoint_wait.kwargs['timeout'],
+            mission.WAYPOINT_TIMEOUT_MIN_SECONDS,
+        )
+        self.assertEqual(mission.mission_state['status'], 'paused')
+        self.assertEqual(
+            mission.mission_state['pause_reason'],
+            'Timeout approaching waypoint 1',
+        )
+
     async def test_resume_rejoins_latest_rtl_point_before_pending_grid_point(self):
         mission.mission_state['rtl_waypoints'] = [
             {'number': 1, 'label': 'RTL WP 1', 'lat': -35.05, 'lon': 149.05, 'alt': 8}
